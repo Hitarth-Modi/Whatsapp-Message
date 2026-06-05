@@ -12,6 +12,8 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
+If you are using Python 3.14, make sure Playwright installs at `1.60.0` or newer. Older Playwright versions depend on an old `greenlet` package that fails to build on Python 3.14.
+
 The script opens WhatsApp Web in Chrome through Playwright. On the first send, log in with the QR code in the browser window that opens.
 
 If you do not have Google Chrome installed:
