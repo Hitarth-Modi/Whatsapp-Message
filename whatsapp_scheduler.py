@@ -92,6 +92,20 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def local_now(tz_name: str) -> datetime:
     return datetime.now(ZoneInfo(tz_name))
 
@@ -933,6 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env_file(Path.cwd() / ".env")
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

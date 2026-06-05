@@ -5,3 +5,6 @@ __pycache__/
 *.sqlite3
 PyWhatKit_DB.txt
 .DS_Store
+
+# Local logs
+scheduler.log
