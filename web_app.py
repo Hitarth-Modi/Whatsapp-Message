@@ -172,20 +172,27 @@ def index():
     )
 
 
-@app.post("/schedule")
+@app.route("/schedule", methods=["GET", "POST"])
 def schedule():
+    if request.method == "GET":
+        return redirect(url_for("index"))
+
     message = request.form.get("message", "").strip()
-    scheduled_at = parse_schedule_time(request.form.get("scheduled_at", ""))
-    with connect(DEFAULT_DB) as conn:
-        message_id = add_message(
-            conn,
-            configured_recipient(),
-            message,
-            scheduled_at,
-            DEFAULT_TZ,
-            allow_past=False,
-        )
-    flash(f"Scheduled #{message_id}.", "success")
+    try:
+        scheduled_at = parse_schedule_time(request.form.get("scheduled_at", ""))
+        with connect(DEFAULT_DB) as conn:
+            message_id = add_message(
+                conn,
+                configured_recipient(),
+                message,
+                scheduled_at,
+                DEFAULT_TZ,
+                allow_past=False,
+            )
+    except Exception as exc:
+        flash(f"Could not schedule message: {exc}", "error")
+    else:
+        flash(f"Scheduled #{message_id}.", "success")
     return redirect(url_for("index"))
 
 
