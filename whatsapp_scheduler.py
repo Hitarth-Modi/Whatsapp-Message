@@ -284,7 +284,7 @@ def due_messages(
     rows = conn.execute(
         """
         SELECT * FROM scheduled_messages
-        WHERE status IN ('pending', 'failed')
+        WHERE status = 'pending'
           AND scheduled_at <= ?
         ORDER BY scheduled_at ASC, id ASC
         LIMIT ?
@@ -319,6 +319,19 @@ def cancel_message(conn: sqlite3.Connection, message_id: int) -> bool:
         UPDATE scheduled_messages
         SET status = 'cancelled'
         WHERE id = ? AND status IN ('pending', 'failed')
+        """,
+        (message_id,),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def retry_message(conn: sqlite3.Connection, message_id: int) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE scheduled_messages
+        SET status = 'pending', error = NULL
+        WHERE id = ? AND status = 'failed'
         """,
         (message_id,),
     )
@@ -633,6 +646,16 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_retry(args: argparse.Namespace) -> int:
+    with connect(args.db) as conn:
+        retried = retry_message(conn, args.id)
+    if not retried:
+        print(f"Message #{args.id} was not failed or was not found.")
+        return 1
+    print(f"Message #{args.id} is pending again.")
+    return 0
+
+
 def cmd_contact_add(args: argparse.Namespace) -> int:
     with connect(args.db) as conn:
         add_contact(conn, args.name, args.phone, args.timezone)
@@ -852,6 +875,10 @@ def build_parser() -> argparse.ArgumentParser:
     cancel = sub.add_parser("cancel", help="Cancel a pending message.")
     cancel.add_argument("id", type=int, help="Message ID to cancel.")
     cancel.set_defaults(func=cmd_cancel)
+
+    retry = sub.add_parser("retry", help="Retry a failed message.")
+    retry.add_argument("id", type=int, help="Failed message ID to retry.")
+    retry.set_defaults(func=cmd_retry)
 
     contact_add = sub.add_parser("contact-add", help="Save or update a contact alias.")
     contact_add.add_argument("name", help="Short name, for example mom or rahul.")

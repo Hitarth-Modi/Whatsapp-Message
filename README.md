@@ -173,6 +173,12 @@ Cancel a message:
 python whatsapp_scheduler.py cancel 1
 ```
 
+Retry a failed message:
+
+```bash
+python whatsapp_scheduler.py retry 1
+```
+
 Test without sending:
 
 ```bash
