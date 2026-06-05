@@ -182,6 +182,33 @@ This WhatsApp Web version needs an active browser session, so it cannot send fro
 
 For true cloud scheduling, deploy the Cloud API mode on a service like Render, Railway, Fly.io, a VPS, or another always-on machine. Do not put your access token directly in GitHub; use environment variables/secrets.
 
+## Public Hosting With Render
+
+GitHub Pages is not enough for this project. Pages can host static HTML/CSS/JS sites like a portfolio or BookBridge, but this dashboard needs a Python Flask server, private environment variables, SQLite/database access, and a scheduler process.
+
+This repo includes `render.yaml`, so you can deploy it from GitHub as a Render web service.
+
+Use these values if creating the service manually:
+
+```bash
+Build Command: pip install -r requirements.txt
+Start Command: gunicorn --workers 1 --threads 8 --timeout 120 wsgi:app
+```
+
+Set these environment variables in Render, not in GitHub:
+
+```bash
+WHATSAPP_CLOUD_ACCESS_TOKEN=your_meta_token
+WHATSAPP_CLOUD_PHONE_NUMBER_ID=your_phone_number_id
+WHATSAPP_CLOUD_API_VERSION=v25.0
+WHATSAPP_DEFAULT_RECIPIENT=+918511468069
+WEB_DASHBOARD_PASSWORD=your_dashboard_password
+FLASK_SECRET_KEY=use_a_long_random_value
+WHATSAPP_TIMEZONE=Asia/Kolkata
+```
+
+Free Render web services can sleep when idle and their local SQLite data can be lost on restart/redeploy. For reliable scheduled sending, use an always-on paid instance and a persistent database or disk.
+
 ## Useful Commands
 
 List pending messages:

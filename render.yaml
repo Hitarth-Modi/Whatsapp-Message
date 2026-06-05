@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: whatsapp-message
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 8 --timeout 120 wsgi:app
+    envVars:
+      - key: WHATSAPP_CLOUD_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_CLOUD_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_CLOUD_API_VERSION
+        value: v25.0
+      - key: WHATSAPP_DEFAULT_RECIPIENT
+        value: "+918511468069"
+      - key: WEB_DASHBOARD_PASSWORD
+        sync: false
+      - key: FLASK_SECRET_KEY
+        sync: false
+      - key: WHATSAPP_TIMEZONE
+        value: Asia/Kolkata

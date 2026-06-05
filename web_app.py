@@ -238,4 +238,6 @@ def message_retry(message_id: int):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5050, debug=False)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "5050"))
+    app.run(host=host, port=port, debug=False)
