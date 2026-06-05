@@ -2,4 +2,5 @@ __pycache__/
 .venv/
 *.pyc
 *.sqlite3
+PyWhatKit_DB.txt
 .DS_Store
