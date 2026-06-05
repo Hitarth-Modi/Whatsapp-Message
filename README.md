@@ -1,6 +1,6 @@
 # WhatsApp Message Scheduler
 
-Schedule WhatsApp messages from your laptop using WhatsApp Web.
+Schedule WhatsApp messages using either WhatsApp Web automation or the official WhatsApp Business Cloud API.
 
 This is meant for personal, explicit messages that you choose to schedule. Avoid bulk messaging or spam.
 
@@ -73,13 +73,85 @@ On macOS, this keeps the laptop awake while the scheduler runs:
 caffeinate -dimsu python whatsapp_scheduler.py run
 ```
 
-## Important: Laptop Closed / Cloud Running
+## Official Cloud API Mode
+
+This is the better path if you want the scheduler to run on an always-on server while your laptop is closed.
+
+You need these from Meta:
+
+- WhatsApp Business Account
+- Meta developer app with WhatsApp enabled
+- Cloud API access token
+- Phone Number ID
+- Approved message templates for business-initiated scheduled messages
+
+Official docs:
+
+- Cloud API overview: <https://developers.facebook.com/docs/whatsapp/cloud-api/>
+- Get started: <https://developers.facebook.com/docs/whatsapp/cloud-api/get-started>
+- Send messages endpoint: <https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages>
+- Message templates: <https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-message-templates>
+
+Set credentials in your terminal:
+
+```bash
+export WHATSAPP_CLOUD_ACCESS_TOKEN="YOUR_META_ACCESS_TOKEN"
+export WHATSAPP_CLOUD_PHONE_NUMBER_ID="YOUR_PHONE_NUMBER_ID"
+export WHATSAPP_CLOUD_API_VERSION="v23.0"
+```
+
+Send a Cloud API text message:
+
+```bash
+python whatsapp_scheduler.py send-now \
+  --backend cloud \
+  --to "+919876543210" \
+  --message "Hello from Cloud API"
+```
+
+Important: normal text messages usually work only inside the 24-hour customer service window after the user messages your business number. For scheduled messages that start a conversation, use an approved template:
+
+```bash
+python whatsapp_scheduler.py send-template-now \
+  --to "+919876543210" \
+  --template-name "hello_world" \
+  --language "en_US"
+```
+
+Schedule an approved template:
+
+```bash
+python whatsapp_scheduler.py add-template \
+  --to "+919876543210" \
+  --template-name "hello_world" \
+  --language "en_US" \
+  --at "today 6:30 PM"
+```
+
+Run scheduled messages through Cloud API:
+
+```bash
+python whatsapp_scheduler.py run --backend cloud
+```
+
+For a template with variables, pass Meta template components as JSON:
+
+```bash
+python whatsapp_scheduler.py add-template \
+  --to "+919876543210" \
+  --template-name "appointment_reminder" \
+  --language "en_US" \
+  --components-json '[{"type":"body","parameters":[{"type":"text","text":"Hitarth"},{"type":"text","text":"6:30 PM"}]}]' \
+  --at "today 6:00 PM"
+```
+
+## Laptop Closed / Cloud Running
 
 Pushing this code to GitHub does not make it run by itself. GitHub stores the code; a computer or server still has to be awake and running `python whatsapp_scheduler.py run`.
 
 This WhatsApp Web version needs an active browser session, so it cannot send from your closed laptop unless it is running on another always-on machine that is logged into WhatsApp Web.
 
-For true cloud scheduling, use the official WhatsApp Business Cloud API instead of browser automation. That requires a Meta developer app, a WhatsApp Business account, API credentials, and usually approved message templates for starting conversations.
+For true cloud scheduling, deploy the Cloud API mode on a service like Render, Railway, Fly.io, a VPS, or another always-on machine. Do not put your access token directly in GitHub; use environment variables/secrets.
 
 ## Useful Commands
 

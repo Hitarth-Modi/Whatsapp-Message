@@ -1,5 +1,6 @@
 __pycache__/
 .venv/
+.env
 *.pyc
 *.sqlite3
 PyWhatKit_DB.txt

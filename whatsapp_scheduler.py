@@ -8,6 +8,8 @@ This tool stores scheduled messages in a local SQLite database. Keep the
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
 import sqlite3
 import sys
@@ -16,7 +18,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 try:
@@ -27,6 +31,7 @@ except ImportError:  # pragma: no cover - handled at runtime for users.
 DEFAULT_TZ = "Asia/Kolkata"
 DEFAULT_DB = Path.home() / ".whatsapp_scheduler" / "messages.sqlite3"
 DEFAULT_BROWSER_PROFILE = Path.home() / ".whatsapp_scheduler" / "browser-profile"
+DEFAULT_CLOUD_API_VERSION = "v23.0"
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,10 @@ class ScheduledMessage:
     scheduled_at: datetime
     status: str
     error: str | None
+    message_kind: str = "text"
+    template_name: str | None = None
+    template_language: str | None = None
+    template_components: str | None = None
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -57,6 +66,19 @@ def connect(db_path: Path) -> sqlite3.Connection:
         )
         """
     )
+    existing_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(scheduled_messages)").fetchall()
+    }
+    migrations = {
+        "message_kind": "ALTER TABLE scheduled_messages ADD COLUMN message_kind TEXT NOT NULL DEFAULT 'text'",
+        "template_name": "ALTER TABLE scheduled_messages ADD COLUMN template_name TEXT",
+        "template_language": "ALTER TABLE scheduled_messages ADD COLUMN template_language TEXT",
+        "template_components": "ALTER TABLE scheduled_messages ADD COLUMN template_components TEXT",
+    }
+    for column, statement in migrations.items():
+        if column not in existing_columns:
+            conn.execute(statement)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS contacts (
@@ -172,6 +194,53 @@ def add_message(
     return int(cur.lastrowid)
 
 
+def add_template_message(
+    conn: sqlite3.Connection,
+    recipient: str,
+    template_name: str,
+    language: str,
+    components_json: str | None,
+    scheduled_at: datetime,
+    tz_name: str,
+    allow_past: bool,
+) -> int:
+    clean_template = template_name.strip()
+    if not clean_template:
+        raise ValueError("Template name cannot be empty.")
+    if scheduled_at <= local_now(tz_name) and not allow_past:
+        raise ValueError("Scheduled time is in the past.")
+    if components_json:
+        cloud_components(components_json)
+
+    now = local_now(tz_name).isoformat(timespec="seconds")
+    cur = conn.execute(
+        """
+        INSERT INTO scheduled_messages (
+            recipient,
+            message,
+            scheduled_at,
+            created_at,
+            message_kind,
+            template_name,
+            template_language,
+            template_components
+        )
+        VALUES (?, ?, ?, ?, 'template', ?, ?, ?)
+        """,
+        (
+            resolve_recipient(conn, recipient),
+            f"template:{clean_template}",
+            scheduled_at.isoformat(timespec="seconds"),
+            now,
+            clean_template,
+            language,
+            components_json,
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
 def rows_to_messages(rows: Iterable[sqlite3.Row]) -> list[ScheduledMessage]:
     return [
         ScheduledMessage(
@@ -181,6 +250,10 @@ def rows_to_messages(rows: Iterable[sqlite3.Row]) -> list[ScheduledMessage]:
             scheduled_at=datetime.fromisoformat(row["scheduled_at"]),
             status=row["status"],
             error=row["error"],
+            message_kind=row["message_kind"],
+            template_name=row["template_name"],
+            template_language=row["template_language"],
+            template_components=row["template_components"],
         )
         for row in rows
     ]
@@ -371,8 +444,130 @@ def send_with_whatsapp_web(
         context.close()
 
 
+def cloud_value(cli_value: str | None, env_name: str) -> str:
+    value = cli_value or os.environ.get(env_name)
+    if not value:
+        raise RuntimeError(
+            f"Missing {env_name}. Set it in your shell or pass the matching CLI option."
+        )
+    return value
+
+
+def post_cloud_message(
+    phone_number_id: str,
+    access_token: str,
+    api_version: str,
+    payload: dict,
+) -> dict:
+    url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            body = response.read().decode("utf-8")
+    except HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Cloud API returned HTTP {exc.code}: {error_body}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Could not reach WhatsApp Cloud API: {exc}") from exc
+
+    return json.loads(body) if body else {}
+
+
+def send_with_cloud_api(
+    recipient: str,
+    message: str,
+    access_token: str,
+    phone_number_id: str,
+    api_version: str,
+) -> dict:
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient.lstrip("+"),
+        "type": "text",
+        "text": {"preview_url": False, "body": message},
+    }
+    return post_cloud_message(phone_number_id, access_token, api_version, payload)
+
+
+def send_template_with_cloud_api(
+    recipient: str,
+    template_name: str,
+    language: str,
+    components: list[dict] | None,
+    access_token: str,
+    phone_number_id: str,
+    api_version: str,
+) -> dict:
+    template: dict = {
+        "name": template_name,
+        "language": {"code": language},
+    }
+    if components:
+        template["components"] = components
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient.lstrip("+"),
+        "type": "template",
+        "template": template,
+    }
+    return post_cloud_message(phone_number_id, access_token, api_version, payload)
+
+
+def cloud_components(value: str | None) -> list[dict] | None:
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--components-json is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("--components-json must be a JSON array.")
+    return parsed
+
+
+def send_message(
+    recipient: str,
+    message: str,
+    args: argparse.Namespace,
+) -> dict | None:
+    if args.backend == "cloud":
+        return send_with_cloud_api(
+            recipient,
+            message,
+            cloud_value(args.cloud_access_token, "WHATSAPP_CLOUD_ACCESS_TOKEN"),
+            cloud_value(args.cloud_phone_number_id, "WHATSAPP_CLOUD_PHONE_NUMBER_ID"),
+            args.cloud_api_version,
+        )
+
+    send_with_whatsapp_web(
+        recipient,
+        message,
+        args.wait_time,
+        args.close_tab,
+        args.close_time,
+        args.browser_profile,
+        args.browser_channel,
+    )
+    return None
+
+
 def format_message(item: ScheduledMessage) -> str:
-    preview = item.message.replace("\n", " ")
+    if item.message_kind == "template":
+        preview = f"template:{item.template_name} ({item.template_language or 'en_US'})"
+    else:
+        preview = item.message.replace("\n", " ")
     if len(preview) > 60:
         preview = f"{preview[:57]}..."
     suffix = f" | error: {item.error}" if item.error else ""
@@ -394,6 +589,26 @@ def cmd_add(args: argparse.Namespace) -> int:
             args.allow_past,
         )
     print(f"Scheduled message #{message_id} for {scheduled_at:%Y-%m-%d %H:%M %Z}.")
+    return 0
+
+
+def cmd_add_template(args: argparse.Namespace) -> int:
+    scheduled_at = parse_when(args.at, args.timezone)
+    with connect(args.db) as conn:
+        message_id = add_template_message(
+            conn,
+            args.to,
+            args.template_name,
+            args.language,
+            args.components_json,
+            scheduled_at,
+            args.timezone,
+            args.allow_past,
+        )
+    print(
+        f"Scheduled template #{message_id} "
+        f"for {scheduled_at:%Y-%m-%d %H:%M %Z}."
+    )
     return 0
 
 
@@ -478,15 +693,20 @@ def send_one(
 
     set_status(conn, item.id, "sending", args.timezone)
     try:
-        send_with_whatsapp_web(
-            item.recipient,
-            item.message,
-            args.wait_time,
-            args.close_tab,
-            args.close_time,
-            args.browser_profile,
-            args.browser_channel,
-        )
+        if item.message_kind == "template":
+            if args.backend != "cloud":
+                raise RuntimeError("Template messages require --backend cloud.")
+            send_template_with_cloud_api(
+                item.recipient,
+                item.template_name or "",
+                item.template_language or "en_US",
+                cloud_components(item.template_components),
+                cloud_value(args.cloud_access_token, "WHATSAPP_CLOUD_ACCESS_TOKEN"),
+                cloud_value(args.cloud_phone_number_id, "WHATSAPP_CLOUD_PHONE_NUMBER_ID"),
+                args.cloud_api_version,
+            )
+        else:
+            send_message(item.recipient, item.message, args)
     except Exception as exc:  # Browser failures should not kill the runner.
         set_status(conn, item.id, "failed", args.timezone, str(exc))
         print(f"Failed #{item.id}: {exc}")
@@ -497,7 +717,10 @@ def send_one(
 
 def cmd_run(args: argparse.Namespace) -> int:
     print("WhatsApp scheduler is running. Keep this terminal open.")
-    print("Make sure WhatsApp Web is logged in and your laptop stays awake.")
+    if args.backend == "cloud":
+        print("Using WhatsApp Cloud API backend.")
+    else:
+        print("Make sure WhatsApp Web is logged in and your laptop stays awake.")
     with connect(args.db) as conn:
         while True:
             messages = due_messages(conn, local_now(args.timezone), args.batch_size)
@@ -512,17 +735,60 @@ def cmd_send_now(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(f"DRY RUN: would send to {recipient}: {args.message}")
         return 0
-    send_with_whatsapp_web(
-        recipient,
-        args.message,
-        args.wait_time,
-        args.close_tab,
-        args.close_time,
-        args.browser_profile,
-        args.browser_channel,
-    )
+    response = send_message(recipient, args.message, args)
+    if response:
+        print(json.dumps(response, indent=2))
     print("Message sent.")
     return 0
+
+
+def cmd_send_template_now(args: argparse.Namespace) -> int:
+    with connect(args.db) as conn:
+        recipient = resolve_recipient(conn, args.to)
+    if args.dry_run:
+        print(
+            "DRY RUN: would send template "
+            f"{args.template_name} ({args.language}) to {recipient}"
+        )
+        return 0
+    response = send_template_with_cloud_api(
+        recipient,
+        args.template_name,
+        args.language,
+        cloud_components(args.components_json),
+        cloud_value(args.cloud_access_token, "WHATSAPP_CLOUD_ACCESS_TOKEN"),
+        cloud_value(args.cloud_phone_number_id, "WHATSAPP_CLOUD_PHONE_NUMBER_ID"),
+        args.cloud_api_version,
+    )
+    print(json.dumps(response, indent=2))
+    print("Template message sent.")
+    return 0
+
+
+def add_web_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--wait-time", type=int, default=20)
+    parser.add_argument("--close-tab", action="store_true")
+    parser.add_argument("--close-time", type=int, default=3)
+    parser.add_argument("--browser-profile", type=Path, default=DEFAULT_BROWSER_PROFILE)
+    parser.add_argument("--browser-channel", default="chrome", choices=("chrome", "chromium"))
+
+
+def add_cloud_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--cloud-access-token",
+        default=None,
+        help="WhatsApp Cloud API access token. Defaults to WHATSAPP_CLOUD_ACCESS_TOKEN.",
+    )
+    parser.add_argument(
+        "--cloud-phone-number-id",
+        default=None,
+        help="Cloud API phone number ID. Defaults to WHATSAPP_CLOUD_PHONE_NUMBER_ID.",
+    )
+    parser.add_argument(
+        "--cloud-api-version",
+        default=os.environ.get("WHATSAPP_CLOUD_API_VERSION", DEFAULT_CLOUD_API_VERSION),
+        help=f"Meta Graph API version. Default: {DEFAULT_CLOUD_API_VERSION}",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -558,6 +824,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add.set_defaults(func=cmd_add)
 
+    add_template = sub.add_parser("add-template", help="Schedule a Cloud API template.")
+    add_template.add_argument("--to", required=True, help="Phone number with country code.")
+    add_template.add_argument("--template-name", required=True)
+    add_template.add_argument("--language", default="en_US")
+    add_template.add_argument(
+        "--components-json",
+        default=None,
+        help="Optional JSON array for template components and variables.",
+    )
+    add_template.add_argument(
+        "--at",
+        required=True,
+        help="When to send. Examples: '2026-06-05 18:30', 'today 6:30 PM'.",
+    )
+    add_template.add_argument(
+        "--allow-past",
+        action="store_true",
+        help="Allow creating a template message that is already due.",
+    )
+    add_template.set_defaults(func=cmd_add_template)
+
     list_cmd = sub.add_parser("list", help="List scheduled messages.")
     list_cmd.add_argument("--all", action="store_true", help="Include sent/cancelled items.")
     list_cmd.set_defaults(func=cmd_list)
@@ -584,24 +871,36 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run the scheduler loop.")
     run.add_argument("--poll-seconds", type=int, default=15)
     run.add_argument("--batch-size", type=int, default=5)
-    run.add_argument("--wait-time", type=int, default=20)
-    run.add_argument("--close-tab", action="store_true")
-    run.add_argument("--close-time", type=int, default=3)
-    run.add_argument("--browser-profile", type=Path, default=DEFAULT_BROWSER_PROFILE)
-    run.add_argument("--browser-channel", default="chrome", choices=("chrome", "chromium"))
+    run.add_argument("--backend", default="web", choices=("web", "cloud"))
+    add_web_args(run)
+    add_cloud_args(run)
     run.add_argument("--dry-run", action="store_true")
     run.set_defaults(func=cmd_run)
 
     now = sub.add_parser("send-now", help="Send one WhatsApp message immediately.")
     now.add_argument("--to", required=True, help="Phone number with country code.")
     now.add_argument("--message", required=True, help="Message text to send.")
-    now.add_argument("--wait-time", type=int, default=20)
-    now.add_argument("--close-tab", action="store_true")
-    now.add_argument("--close-time", type=int, default=3)
-    now.add_argument("--browser-profile", type=Path, default=DEFAULT_BROWSER_PROFILE)
-    now.add_argument("--browser-channel", default="chrome", choices=("chrome", "chromium"))
+    now.add_argument("--backend", default="web", choices=("web", "cloud"))
+    add_web_args(now)
+    add_cloud_args(now)
     now.add_argument("--dry-run", action="store_true")
     now.set_defaults(func=cmd_send_now)
+
+    template = sub.add_parser(
+        "send-template-now",
+        help="Send an approved WhatsApp Cloud API template immediately.",
+    )
+    template.add_argument("--to", required=True, help="Phone number with country code.")
+    template.add_argument("--template-name", required=True)
+    template.add_argument("--language", default="en_US")
+    template.add_argument(
+        "--components-json",
+        default=None,
+        help="Optional JSON array for template components and variables.",
+    )
+    add_cloud_args(template)
+    template.add_argument("--dry-run", action="store_true")
+    template.set_defaults(func=cmd_send_template_now)
 
     return parser
 
