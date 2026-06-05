@@ -52,6 +52,15 @@ The dashboard uses the Cloud API credentials from `.env` and sends to `WHATSAPP_
 WHATSAPP_DEFAULT_RECIPIENT=+918511468069
 ```
 
+Protect the dashboard with a password:
+
+```bash
+WEB_DASHBOARD_PASSWORD=your_dashboard_password
+FLASK_SECRET_KEY=use_a_long_random_value
+```
+
+Keep these values in `.env` locally or in your deployment provider's secret environment variables. Do not commit real passwords or tokens to GitHub.
+
 Use a phone number with country code:
 
 ```bash

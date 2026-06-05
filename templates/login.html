@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login - WhatsApp Scheduler</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f8fa;
+        --panel: #ffffff;
+        --ink: #1d252d;
+        --muted: #64717f;
+        --line: #d8dee6;
+        --green: #128c7e;
+        --green-strong: #075e54;
+        --red: #b42318;
+        --shadow: 0 8px 24px rgba(24, 35, 45, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      .panel {
+        width: min(100%, 420px);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: var(--shadow);
+        padding: 22px;
+      }
+
+      h1 {
+        margin: 0 0 18px;
+        font-size: 24px;
+        line-height: 1.2;
+      }
+
+      form {
+        display: grid;
+        gap: 14px;
+      }
+
+      label {
+        display: grid;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      input {
+        min-height: 44px;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0 12px;
+        font: inherit;
+      }
+
+      button {
+        min-height: 42px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--green);
+        color: #fff;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 750;
+      }
+
+      button:hover {
+        background: var(--green-strong);
+      }
+
+      .flash {
+        border: 1px solid #f1b8b2;
+        border-left: 4px solid var(--red);
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin-bottom: 14px;
+        color: var(--red);
+        background: #fff1f0;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>WhatsApp Scheduler</h1>
+      {% with flashes = get_flashed_messages() %}
+        {% if flashes %}
+          {% for message in flashes %}
+            <div class="flash">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+      <form method="post" action="{{ url_for('login') }}">
+        <label>
+          Password
+          <input name="password" type="password" autocomplete="current-password" required autofocus>
+        </label>
+        <button type="submit">Enter</button>
+      </form>
+    </main>
+  </body>
+</html>

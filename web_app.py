@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import os
+import secrets
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, redirect, render_template, request, session, url_for
 
 from whatsapp_scheduler import (
     DEFAULT_CLOUD_API_VERSION,
@@ -34,7 +35,7 @@ POLL_SECONDS = 15
 load_env_file(PROJECT_DIR / ".env")
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "local-whatsapp-scheduler")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 
 runner_lock = threading.Lock()
 runner_stop = threading.Event()
@@ -43,6 +44,15 @@ runner_thread: threading.Thread | None = None
 
 def configured_recipient() -> str:
     return os.environ.get("WHATSAPP_DEFAULT_RECIPIENT", DEFAULT_RECIPIENT)
+
+
+def dashboard_password() -> str | None:
+    return os.environ.get("WEB_DASHBOARD_PASSWORD")
+
+
+def authenticated() -> bool:
+    password = dashboard_password()
+    return not password or session.get("authenticated") is True
 
 
 def cloud_args() -> SimpleNamespace:
@@ -119,6 +129,33 @@ def parse_schedule_time(value: str) -> datetime:
     except ValueError as exc:
         raise ValueError("Schedule time is not valid.") from exc
     return parsed.replace(tzinfo=local_now(DEFAULT_TZ).tzinfo)
+
+
+@app.before_request
+def require_login():
+    if request.endpoint in {"login", "static"}:
+        return None
+    if authenticated():
+        return None
+    return redirect(url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        expected = dashboard_password()
+        submitted = request.form.get("password", "")
+        if expected and secrets.compare_digest(submitted, expected):
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        flash("Incorrect password.", "error")
+    return render_template("login.html", password_enabled=dashboard_password() is not None)
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.get("/")
