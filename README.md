@@ -32,6 +32,26 @@ Easiest way:
 python whatsapp_scheduler.py interactive
 ```
 
+## Web Dashboard
+
+Run the local website:
+
+```bash
+python web_app.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:5050
+```
+
+The dashboard uses the Cloud API credentials from `.env` and sends to `WHATSAPP_DEFAULT_RECIPIENT`. In the current test setup, that receiver is:
+
+```bash
+WHATSAPP_DEFAULT_RECIPIENT=+918511468069
+```
+
 Use a phone number with country code:
 
 ```bash
